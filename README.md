@@ -1,4 +1,78 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# VHM Queue Board - Bảng Hàng Đợi Real-time
+
+Website quản lý hàng đợi với 12 dòng và 4 cột (Cab Trái P1/P2, Cab Phải P1/P2), hỗ trợ chỉnh sửa real-time và lịch sử thay đổi.
+
+## ✨ Tính Năng
+
+- 📋 **Bảng 12x4**: 12 dòng, 4 cột (2 Cab, mỗi Cab có P1 và P2)
+- ✏️ **Chỉnh sửa tự do**: Ghi và xóa nội dung bất kỳ lúc nào
+- ☑️ **Checkbox**: Tick/untick mỗi dòng
+- 🔄 **Real-time sync**: Cập nhật mỗi 2 giây cho tất cả users
+- 📜 **Lịch sử**: Xem log tất cả thay đổi với timestamp
+- 🎨 **Giao diện rõ ràng**: Màu sắc dễ đọc, responsive
+
+## 🚀 Chạy Local
+
+```bash
+# Cài đặt dependencies
+npm install
+
+# Chạy migrations
+npx prisma migrate dev
+
+# Khởi động dev server
+npm run dev
+```
+
+Mở trình duyệt: http://localhost:3000
+
+## 🌐 Deploy lên Vercel
+
+Xem hướng dẫn chi tiết trong file [DEPLOY.md](./DEPLOY.md)
+
+**TÓM TẮT:**
+1. SQLite không phù hợp cho Vercel (serverless)
+2. Nên dùng **Vercel Postgres** (miễn phí 256MB)
+3. An toàn với SSL/TLS, backup tự động
+4. Đủ cho 10-50 users đồng thời
+
+## 🛠️ Tech Stack
+
+- **Framework**: Next.js 16 (App Router)
+- **Database**: SQLite (local) / PostgreSQL (production)
+- **ORM**: Prisma
+- **Styling**: Tailwind CSS
+- **Language**: TypeScript
+
+## 📁 Cấu Trúc
+
+```
+├── src/
+│   ├── app/
+│   │   ├── api/
+│   │   │   ├── queue/          # CRUD operations
+│   │   │   └── history/        # History logs
+│   │   ├── page.tsx            # Main page
+│   │   └── globals.css         # Styles
+│   ├── components/
+│   │   └── QueueBoard.tsx      # Main component
+│   └── lib/
+│       └── prisma.ts           # Prisma client
+├── prisma/
+│   ├── schema.prisma           # Database schema (SQLite)
+│   └── schema.prisma.production # For Vercel (PostgreSQL)
+└── DEPLOY.md                   # Deployment guide
+```
+
+## 🔒 Bảo Mật
+
+Hiện tại: Không có authentication (mọi người đều có quyền chỉnh sửa)
+
+**Để tăng cường bảo mật:**
+1. Thêm NextAuth.js cho login
+2. Implement rate limiting
+3. Add input validation
+4. Sử dụng HTTPS (Vercel mặc định)
 
 ## Getting Started
 
