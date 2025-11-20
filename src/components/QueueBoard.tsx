@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { normalizeToEnglish } from '@/lib/textUtils';
 
 interface QueueEntry {
     id: number;
@@ -137,7 +138,7 @@ export default function QueueBoard() {
         }
     };
 
-    // Handle checkbox change with single selection per cab
+    // Handle checkbox change with single selection per cab and reordering
     const handleCheckboxChange = async (rowIndex: number, side: string, checked: boolean) => {
         if (checked) {
             // When checking a row, uncheck all other rows in the same cab
@@ -153,13 +154,48 @@ export default function QueueBoard() {
                 }
             }
         } else {
-            // When unchecking, just uncheck this row
-            const entriesToUncheck = entries.filter(
-                e => e.side === side && e.rowIndex === rowIndex
-            );
-            for (const entry of entriesToUncheck) {
+            // When unchecking, reorder rows: move unchecked to bottom
+            const sideEntries = entries.filter(e => e.side === side);
+            
+            // Group entries by rowIndex to handle P1/P2 pairs
+            const rowGroups = new Map<number, QueueEntry[]>();
+            sideEntries.forEach(entry => {
+                if (!rowGroups.has(entry.rowIndex)) {
+                    rowGroups.set(entry.rowIndex, []);
+                }
+                rowGroups.get(entry.rowIndex)!.push(entry);
+            });
+            
+            // Get all unique rowIndex values sorted
+            const sortedRowIndices = Array.from(rowGroups.keys()).sort((a, b) => a - b);
+            
+            // Separate the unchecked row and other rows
+            const uncheckedRowEntries = rowGroups.get(rowIndex) || [];
+            const otherRowIndices = sortedRowIndices.filter(idx => idx !== rowIndex);
+            
+            // Uncheck the current row entries
+            for (const entry of uncheckedRowEntries) {
                 await updateEntry(entry.id, { checked: false });
             }
+            
+            // Reorder: assign new rowIndex sequentially
+            let newRowIndex = 0;
+            
+            // First, reassign all other rows in order
+            for (const oldRowIndex of otherRowIndices) {
+                const rowEntries = rowGroups.get(oldRowIndex)!;
+                for (const entry of rowEntries) {
+                    await updateEntry(entry.id, { rowIndex: newRowIndex });
+                }
+                newRowIndex++;
+            }
+            
+            // Finally, move unchecked row to the end
+            for (const entry of uncheckedRowEntries) {
+                await updateEntry(entry.id, { rowIndex: newRowIndex });
+            }
+            
+            fetchEntries();
         }
     };
 
@@ -174,6 +210,21 @@ export default function QueueBoard() {
         } catch (error) {
             console.error('Error clearing entry:', error);
         }
+    };
+
+    // Clear entire row (both P1 and P2)
+    const clearRow = async (rowIndex: number, side: string) => {
+        const p1Entry = getEntry(rowIndex, side, 'P1');
+        const p2Entry = getEntry(rowIndex, side, 'P2');
+        
+        if (p1Entry) await clearEntry(p1Entry.id);
+        if (p2Entry) await clearEntry(p2Entry.id);
+    };
+
+    // Handle text input with normalization
+    const handleTextInput = (id: number, rawText: string) => {
+        const normalized = normalizeToEnglish(rawText);
+        updateEntry(id, { text: normalized });
     };
 
     // Get entry by position
@@ -275,14 +326,14 @@ export default function QueueBoard() {
 
                         return (
                             <div key={`left-${rowIndex}`} className="mb-3">
-                                {/* P1 and P2 inputs with checkbox */}
-                                <div className="grid grid-cols-[auto_1fr_1fr] gap-2 items-start">
+                                {/* Row with checkbox, P1, P2, and single delete button */}
+                                <div className="grid grid-cols-[auto_1fr_1fr_auto] gap-2 items-center">
                                     {/* Checkbox */}
                                     <input
                                         type="checkbox"
                                         checked={p1Entry.checked}
                                         onChange={(e) => handleCheckboxChange(rowIndex, 'left', e.target.checked)}
-                                        className="w-5 h-5 cursor-pointer mt-2"
+                                        className="w-5 h-5 cursor-pointer"
                                     />
 
                                     {/* P1 Input */}
@@ -290,15 +341,9 @@ export default function QueueBoard() {
                                         <input
                                             type="text"
                                             value={p1Entry.text}
-                                            onChange={(e) => updateEntry(p1Entry.id, { text: e.target.value })}
+                                            onChange={(e) => handleTextInput(p1Entry.id, e.target.value)}
                                             className="w-full px-2 py-2 border-2 border-gray-300 rounded text-sm focus:outline-none focus:border-blue-500 text-gray-800"
                                         />
-                                        <button
-                                            onClick={() => clearEntry(p1Entry.id)}
-                                            className="mt-2 text-sm text-red-600 hover:text-red-800 font-semibold"
-                                        >
-                                            Xóa
-                                        </button>
                                     </div>
 
                                     {/* P2 Input */}
@@ -306,16 +351,19 @@ export default function QueueBoard() {
                                         <input
                                             type="text"
                                             value={p2Entry.text}
-                                            onChange={(e) => updateEntry(p2Entry.id, { text: e.target.value })}
+                                            onChange={(e) => handleTextInput(p2Entry.id, e.target.value)}
                                             className="w-full px-2 py-2 border-2 border-gray-300 rounded text-sm focus:outline-none focus:border-blue-500 text-gray-800"
                                         />
-                                        <button
-                                            onClick={() => clearEntry(p2Entry.id)}
-                                            className="mt-2 text-sm text-red-600 hover:text-red-800 font-semibold"
-                                        >
-                                            Xóa
-                                        </button>
                                     </div>
+                                    
+                                    {/* Single Delete Button for entire row */}
+                                    <button
+                                        onClick={() => clearRow(rowIndex, 'left')}
+                                        className="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700 font-semibold text-sm"
+                                        title="Xóa cả hàng"
+                                    >
+                                        ✕
+                                    </button>
                                 </div>
                             </div>
                         );
@@ -339,14 +387,14 @@ export default function QueueBoard() {
 
                         return (
                             <div key={`right-${rowIndex}`} className="mb-3">
-                                {/* P1 and P2 inputs with checkbox */}
-                                <div className="grid grid-cols-[auto_1fr_1fr] gap-2 items-start">
+                                {/* Row with checkbox, P1, P2, and single delete button */}
+                                <div className="grid grid-cols-[auto_1fr_1fr_auto] gap-2 items-center">
                                     {/* Checkbox */}
                                     <input
                                         type="checkbox"
                                         checked={p1Entry.checked}
                                         onChange={(e) => handleCheckboxChange(rowIndex, 'right', e.target.checked)}
-                                        className="w-5 h-5 cursor-pointer mt-2"
+                                        className="w-5 h-5 cursor-pointer"
                                     />
 
                                     {/* P1 Input */}
@@ -354,15 +402,9 @@ export default function QueueBoard() {
                                         <input
                                             type="text"
                                             value={p1Entry.text}
-                                            onChange={(e) => updateEntry(p1Entry.id, { text: e.target.value })}
+                                            onChange={(e) => handleTextInput(p1Entry.id, e.target.value)}
                                             className="w-full px-2 py-2 border-2 border-gray-300 rounded text-sm focus:outline-none focus:border-blue-500 text-gray-800"
                                         />
-                                        <button
-                                            onClick={() => clearEntry(p1Entry.id)}
-                                            className="mt-2 text-sm text-red-600 hover:text-red-800 font-semibold"
-                                        >
-                                            Xóa
-                                        </button>
                                     </div>
 
                                     {/* P2 Input */}
@@ -370,16 +412,19 @@ export default function QueueBoard() {
                                         <input
                                             type="text"
                                             value={p2Entry.text}
-                                            onChange={(e) => updateEntry(p2Entry.id, { text: e.target.value })}
+                                            onChange={(e) => handleTextInput(p2Entry.id, e.target.value)}
                                             className="w-full px-2 py-2 border-2 border-gray-300 rounded text-sm focus:outline-none focus:border-blue-500 text-gray-800"
                                         />
-                                        <button
-                                            onClick={() => clearEntry(p2Entry.id)}
-                                            className="mt-2 text-sm text-red-600 hover:text-red-800 font-semibold"
-                                        >
-                                            Xóa
-                                        </button>
                                     </div>
+                                    
+                                    {/* Single Delete Button for entire row */}
+                                    <button
+                                        onClick={() => clearRow(rowIndex, 'right')}
+                                        className="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700 font-semibold text-sm"
+                                        title="Xóa cả hàng"
+                                    >
+                                        ✕
+                                    </button>
                                 </div>
                             </div>
                         );
