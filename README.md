@@ -6,7 +6,7 @@ Website quản lý hàng đợi với 12 dòng và 4 cột (Cab Trái P1/P2, Cab
 
 - 📋 **Bảng 12x4**: 12 dòng, 4 cột (2 Cab, mỗi Cab có P1 và P2)
 - ✏️ **Chỉnh sửa tự do**: Ghi và xóa nội dung bất kỳ lúc nào
-- ☑️ **Checkbox**: Tick/untick mỗi dòng
+- ☑️ **Checkbox thông minh**: Mỗi Cab chỉ tick được 1 hàng duy nhất
 - 🔄 **Real-time sync**: Cập nhật mỗi 2 giây cho tất cả users
 - 📜 **Lịch sử**: Xem log tất cả thay đổi với timestamp
 - 🎨 **Giao diện rõ ràng**: Màu sắc dễ đọc, responsive
@@ -28,7 +28,26 @@ Mở trình duyệt: http://localhost:3000
 
 ## 🌐 Deploy lên Vercel
 
-Xem hướng dẫn chi tiết trong file [DEPLOY.md](./DEPLOY.md)
+⚠️ **QUAN TRỌNG**: SQLite không hoạt động trên Vercel!
+
+### Quick Fix (Chuyển sang PostgreSQL):
+
+**Windows:**
+```cmd
+switch-to-postgres.bat
+```
+
+**Mac/Linux:**
+```bash
+chmod +x switch-to-postgres.sh
+./switch-to-postgres.sh
+```
+
+Sau đó làm theo hướng dẫn trong terminal.
+
+### Chi tiết:
+
+Xem file [SWITCH-TO-POSTGRESQL.md](./SWITCH-TO-POSTGRESQL.md) hoặc [FIX-VERCEL-ERROR.md](./FIX-VERCEL-ERROR.md)
 
 **TÓM TẮT:**
 1. SQLite không phù hợp cho Vercel (serverless)
@@ -38,11 +57,23 @@ Xem hướng dẫn chi tiết trong file [DEPLOY.md](./DEPLOY.md)
 
 ## 🛠️ Tech Stack
 
-- **Framework**: Next.js 16 (App Router)
+- **Framework**: Next.js 16 (App Router + Turbopack)
 - **Database**: SQLite (local) / PostgreSQL (production)
 - **ORM**: Prisma
 - **Styling**: Tailwind CSS
 - **Language**: TypeScript
+
+## 🐛 Troubleshooting
+
+### Lỗi "entries.find is not a function"
+✅ Đã fix - App giờ validate API response và hiển thị error message rõ ràng
+
+### Lỗi 500 khi deploy Vercel
+✅ Đã fix - Thêm error handling và hướng dẫn chuyển sang PostgreSQL
+
+### Database bị reset sau mỗi deploy
+⚠️ Đây là dấu hiệu bạn vẫn đang dùng SQLite trên Vercel
+→ Phải chuyển sang PostgreSQL như hướng dẫn trên
 
 ## 📁 Cấu Trúc
 

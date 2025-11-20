@@ -28,16 +28,37 @@ export default function QueueBoard() {
     const [history, setHistory] = useState<HistoryLog[]>([]);
     const [showHistory, setShowHistory] = useState(false);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
     // Fetch entries
     const fetchEntries = async () => {
         try {
             const response = await fetch('/api/queue');
             const data = await response.json();
-            setEntries(data);
+            
+            // Check if API returned an error
+            if (!response.ok || data.error) {
+                setError(data.details || data.error || 'Failed to fetch data');
+                setEntries([]);
+                setLoading(false);
+                return;
+            }
+            
+            // Ensure data is an array before setting
+            if (Array.isArray(data)) {
+                setEntries(data);
+                setError(null);
+            } else {
+                console.error('API returned non-array data:', data);
+                setEntries([]);
+                setError('Invalid data format received from server');
+            }
             setLoading(false);
         } catch (error) {
             console.error('Error fetching entries:', error);
+            setError('Cannot connect to server. Please check your internet connection.');
+            setEntries([]);
+            setLoading(false);
         }
     };
 
@@ -46,30 +67,44 @@ export default function QueueBoard() {
         try {
             const response = await fetch('/api/history');
             const data = await response.json();
-            setHistory(data);
+            
+            // Ensure data is an array before setting
+            if (Array.isArray(data)) {
+                setHistory(data);
+            } else {
+                console.error('API returned non-array data:', data);
+                setHistory([]);
+            }
         } catch (error) {
             console.error('Error fetching history:', error);
+            setHistory([]);
         }
     };
 
     // Initialize data on mount
     useEffect(() => {
         const initializeData = async () => {
-            // Try to fetch existing data
-            const response = await fetch('/api/queue');
-            const data = await response.json();
+            try {
+                // Try to fetch existing data
+                const response = await fetch('/api/queue');
+                const data = await response.json();
 
-            // If no data, initialize
-            if (data.length === 0) {
-                await fetch('/api/queue', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'initialize' })
-                });
+                // If no data or not an array, initialize
+                if (!Array.isArray(data) || data.length === 0) {
+                    await fetch('/api/queue', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'initialize' })
+                    });
+                }
+
+                fetchEntries();
+                fetchHistory();
+            } catch (error) {
+                console.error('Error initializing data:', error);
+                setEntries([]);
+                setLoading(false);
             }
-
-            fetchEntries();
-            fetchHistory();
         };
 
         initializeData();
@@ -152,6 +187,57 @@ export default function QueueBoard() {
         return (
             <div className="flex items-center justify-center min-h-screen">
                 <div className="text-xl">Đang tải...</div>
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-red-50">
+                <div className="max-w-2xl w-full bg-white border-2 border-red-300 rounded-lg p-8 shadow-lg">
+                    <h1 className="text-2xl font-bold text-red-600 mb-4">⚠️ Lỗi Kết Nối Database</h1>
+                    <div className="text-gray-700 mb-4">
+                        <p className="mb-2"><strong>Chi tiết lỗi:</strong></p>
+                        <p className="bg-gray-100 p-3 rounded text-sm font-mono">{error}</p>
+                    </div>
+                    
+                    {error.includes('SQLite') || error.includes('SQLITE') ? (
+                        <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-4">
+                            <p className="font-semibold text-yellow-800 mb-2">💡 Giải pháp:</p>
+                            <p className="text-yellow-700 text-sm">
+                                SQLite không hoạt động trên Vercel. Bạn cần chuyển sang PostgreSQL.
+                            </p>
+                        </div>
+                    ) : null}
+                    
+                    <div className="space-y-2 text-sm text-gray-600 mb-4">
+                        <p><strong>Các bước khắc phục:</strong></p>
+                        <ol className="list-decimal list-inside space-y-1 ml-2">
+                            <li>Vào Vercel Dashboard → Storage → Create Database → Postgres</li>
+                            <li>Copy file <code className="bg-gray-100 px-1">prisma/schema.postgresql.prisma</code></li>
+                            <li>Paste vào <code className="bg-gray-100 px-1">prisma/schema.prisma</code></li>
+                            <li>Commit và push code lên GitHub</li>
+                            <li>Chạy: <code className="bg-gray-100 px-1">npx prisma migrate deploy</code></li>
+                        </ol>
+                    </div>
+                    
+                    <div className="flex gap-4">
+                        <button 
+                            onClick={() => window.location.reload()}
+                            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+                        >
+                            🔄 Thử Lại
+                        </button>
+                        <a 
+                            href="https://github.com/hidr0c/vhmqueueboard/blob/main/SWITCH-TO-POSTGRESQL.md"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition"
+                        >
+                            📖 Xem Hướng Dẫn
+                        </a>
+                    </div>
+                </div>
             </div>
         );
     }
