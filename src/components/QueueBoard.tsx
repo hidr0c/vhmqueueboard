@@ -107,7 +107,7 @@ export default function QueueBoard() {
         if (checked) {
             // When checking a row, uncheck all other rows in the same cab
             const entriesToUpdate = entries.filter(e => e.side === side);
-            
+
             for (const entry of entriesToUpdate) {
                 if (entry.rowIndex === rowIndex) {
                     // Check this row
@@ -198,7 +198,7 @@ export default function QueueBoard() {
                                         onChange={(e) => handleCheckboxChange(rowIndex, 'left', e.target.checked)}
                                         className="w-5 h-5 cursor-pointer mt-2"
                                     />
-                                    
+
                                     {/* P1 Input */}
                                     <div className="border-2 border-gray-400 rounded p-2 bg-white shadow-sm">
                                         <input
@@ -214,7 +214,7 @@ export default function QueueBoard() {
                                             Xóa
                                         </button>
                                     </div>
-                                    
+
                                     {/* P2 Input */}
                                     <div className="border-2 border-gray-400 rounded p-2 bg-white shadow-sm">
                                         <input
@@ -262,7 +262,7 @@ export default function QueueBoard() {
                                         onChange={(e) => handleCheckboxChange(rowIndex, 'right', e.target.checked)}
                                         className="w-5 h-5 cursor-pointer mt-2"
                                     />
-                                    
+
                                     {/* P1 Input */}
                                     <div className="border-2 border-gray-400 rounded p-2 bg-white shadow-sm">
                                         <input
@@ -278,7 +278,7 @@ export default function QueueBoard() {
                                             Xóa
                                         </button>
                                     </div>
-                                    
+
                                     {/* P2 Input */}
                                     <div className="border-2 border-gray-400 rounded p-2 bg-white shadow-sm">
                                         <input
