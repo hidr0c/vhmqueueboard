@@ -35,7 +35,7 @@ export default function QueueBoard() {
         try {
             const response = await fetch('/api/queue');
             const data = await response.json();
-            
+
             // Check if API returned an error
             if (!response.ok || data.error) {
                 setError(data.details || data.error || 'Failed to fetch data');
@@ -43,7 +43,7 @@ export default function QueueBoard() {
                 setLoading(false);
                 return;
             }
-            
+
             // Ensure data is an array before setting
             if (Array.isArray(data)) {
                 setEntries(data);
@@ -67,7 +67,7 @@ export default function QueueBoard() {
         try {
             const response = await fetch('/api/history');
             const data = await response.json();
-            
+
             // Ensure data is an array before setting
             if (Array.isArray(data)) {
                 setHistory(data);
@@ -200,7 +200,7 @@ export default function QueueBoard() {
                         <p className="mb-2"><strong>Chi tiết lỗi:</strong></p>
                         <p className="bg-gray-100 p-3 rounded text-sm font-mono">{error}</p>
                     </div>
-                    
+
                     {error.includes('SQLite') || error.includes('SQLITE') ? (
                         <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-4">
                             <p className="font-semibold text-yellow-800 mb-2">💡 Giải pháp:</p>
@@ -209,7 +209,7 @@ export default function QueueBoard() {
                             </p>
                         </div>
                     ) : null}
-                    
+
                     <div className="space-y-2 text-sm text-gray-600 mb-4">
                         <p><strong>Các bước khắc phục:</strong></p>
                         <ol className="list-decimal list-inside space-y-1 ml-2">
@@ -220,15 +220,15 @@ export default function QueueBoard() {
                             <li>Chạy: <code className="bg-gray-100 px-1">npx prisma migrate deploy</code></li>
                         </ol>
                     </div>
-                    
+
                     <div className="flex gap-4">
-                        <button 
+                        <button
                             onClick={() => window.location.reload()}
                             className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
                         >
                             🔄 Thử Lại
                         </button>
-                        <a 
+                        <a
                             href="https://github.com/hidr0c/vhmqueueboard/blob/main/SWITCH-TO-POSTGRESQL.md"
                             target="_blank"
                             rel="noopener noreferrer"

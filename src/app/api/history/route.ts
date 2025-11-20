@@ -11,12 +11,13 @@ export async function GET() {
     return NextResponse.json(logs);
   } catch (error) {
     console.error("Error fetching history:", error);
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
-      { 
+      {
         error: "Failed to fetch history",
         details: errorMessage,
-        hint: "If using SQLite, switch to PostgreSQL for Vercel deployment"
+        hint: "If using SQLite, switch to PostgreSQL for Vercel deployment",
       },
       { status: 500 }
     );

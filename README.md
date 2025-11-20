@@ -13,9 +13,18 @@ Website quản lý hàng đợi với 12 dòng và 4 cột (Cab Trái P1/P2, Cab
 
 ## 🚀 Chạy Local
 
+### Lần đầu tiên (First Time Setup):
+
 ```bash
-# Cài đặt dependencies
+# Clone repo
+git clone https://github.com/hidr0c/vhmqueueboard.git
+cd vhmqueueboard
+
+# Cài đặt dependencies (sẽ tự động tạo .env nếu chưa có)
 npm install
+
+# Hoặc chạy setup thủ công
+npm run setup
 
 # Chạy migrations
 npx prisma migrate dev
@@ -24,7 +33,39 @@ npx prisma migrate dev
 npm run dev
 ```
 
+### Những lần sau:
+
+```bash
+# Chỉ cần chạy
+npm run dev
+```
+
 Mở trình duyệt: http://localhost:3000
+
+### ⚠️ Nếu gặp lỗi "Environment variable not found: DATABASE_URL":
+
+**Tự động (khuyến nghị):**
+```bash
+npm run setup
+```
+
+**Thủ công:**
+
+Windows:
+```cmd
+setup-env.bat
+```
+
+Mac/Linux:
+```bash
+chmod +x setup-env.sh
+./setup-env.sh
+```
+
+Hoặc tạo file `.env` với nội dung:
+```
+DATABASE_URL="file:./dev.db"
+```
 
 ## 🌐 Deploy lên Vercel
 
