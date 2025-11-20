@@ -156,7 +156,7 @@ export default function QueueBoard() {
         } else {
             // When unchecking, reorder rows: move unchecked to bottom
             const sideEntries = entries.filter(e => e.side === side);
-            
+
             // Group entries by rowIndex to handle P1/P2 pairs
             const rowGroups = new Map<number, QueueEntry[]>();
             sideEntries.forEach(entry => {
@@ -165,22 +165,22 @@ export default function QueueBoard() {
                 }
                 rowGroups.get(entry.rowIndex)!.push(entry);
             });
-            
+
             // Get all unique rowIndex values sorted
             const sortedRowIndices = Array.from(rowGroups.keys()).sort((a, b) => a - b);
-            
+
             // Separate the unchecked row and other rows
             const uncheckedRowEntries = rowGroups.get(rowIndex) || [];
             const otherRowIndices = sortedRowIndices.filter(idx => idx !== rowIndex);
-            
+
             // Uncheck the current row entries
             for (const entry of uncheckedRowEntries) {
                 await updateEntry(entry.id, { checked: false });
             }
-            
+
             // Reorder: assign new rowIndex sequentially
             let newRowIndex = 0;
-            
+
             // First, reassign all other rows in order
             for (const oldRowIndex of otherRowIndices) {
                 const rowEntries = rowGroups.get(oldRowIndex)!;
@@ -189,12 +189,12 @@ export default function QueueBoard() {
                 }
                 newRowIndex++;
             }
-            
+
             // Finally, move unchecked row to the end
             for (const entry of uncheckedRowEntries) {
                 await updateEntry(entry.id, { rowIndex: newRowIndex });
             }
-            
+
             fetchEntries();
         }
     };
@@ -216,7 +216,7 @@ export default function QueueBoard() {
     const clearRow = async (rowIndex: number, side: string) => {
         const p1Entry = getEntry(rowIndex, side, 'P1');
         const p2Entry = getEntry(rowIndex, side, 'P2');
-        
+
         if (p1Entry) await clearEntry(p1Entry.id);
         if (p2Entry) await clearEntry(p2Entry.id);
     };
@@ -355,7 +355,7 @@ export default function QueueBoard() {
                                             className="w-full px-2 py-2 border-2 border-gray-300 rounded text-sm focus:outline-none focus:border-blue-500 text-gray-800"
                                         />
                                     </div>
-                                    
+
                                     {/* Single Delete Button for entire row */}
                                     <button
                                         onClick={() => clearRow(rowIndex, 'left')}
@@ -416,7 +416,7 @@ export default function QueueBoard() {
                                             className="w-full px-2 py-2 border-2 border-gray-300 rounded text-sm focus:outline-none focus:border-blue-500 text-gray-800"
                                         />
                                     </div>
-                                    
+
                                     {/* Single Delete Button for entire row */}
                                     <button
                                         onClick={() => clearRow(rowIndex, 'right')}
