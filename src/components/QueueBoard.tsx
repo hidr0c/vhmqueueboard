@@ -236,23 +236,34 @@ export default function QueueBoard() {
     // Handle checkbox change with single selection per cab and reordering
     const handleCheckboxChange = async (rowIndex: number, side: string, checked: boolean) => {
         if (checked) {
-            // When checking a row, uncheck all other rows in the same cab
-            const entriesToUpdate = entries.filter(e => e.side === side);
-
-            for (const entry of entriesToUpdate) {
-                if (entry.rowIndex === rowIndex) {
-                    // Check this row
-                    await updateEntry(entry.id, { checked: true });
-                } else if (entry.checked) {
-                    // Uncheck other rows
-                    await updateEntry(entry.id, { checked: false });
+            // Optimistic update - instant UI feedback
+            setEntries(prev => prev.map(e => {
+                if (e.side === side) {
+                    if (e.rowIndex === rowIndex) {
+                        return { ...e, checked: true };
+                    } else if (e.checked) {
+                        return { ...e, checked: false };
+                    }
                 }
-            }
-        } else {
-            // When unchecking, reorder rows: move unchecked to bottom
-            const sideEntries = entries.filter(e => e.side === side);
+                return e;
+            }));
 
-            // Group entries by rowIndex to handle P1/P2 pairs
+            // Send API calls in parallel (not sequential)
+            const entriesToUpdate = entries.filter(e => e.side === side);
+            const updatePromises = entriesToUpdate.map(entry => {
+                if (entry.rowIndex === rowIndex) {
+                    return updateEntry(entry.id, { checked: true });
+                } else if (entry.checked) {
+                    return updateEntry(entry.id, { checked: false });
+                }
+                return Promise.resolve();
+            });
+            
+            // Wait for all updates to complete
+            await Promise.all(updatePromises);
+        } else {
+            // Optimistic update for unchecking and reordering
+            const sideEntries = entries.filter(e => e.side === side);
             const rowGroups = new Map<number, QueueEntry[]>();
             sideEntries.forEach(entry => {
                 if (!rowGroups.has(entry.rowIndex)) {
@@ -261,42 +272,71 @@ export default function QueueBoard() {
                 rowGroups.get(entry.rowIndex)!.push(entry);
             });
 
-            // Get all unique rowIndex values sorted
             const sortedRowIndices = Array.from(rowGroups.keys()).sort((a, b) => a - b);
-
-            // Separate the unchecked row and other rows
             const uncheckedRowEntries = rowGroups.get(rowIndex) || [];
             const otherRowIndices = sortedRowIndices.filter(idx => idx !== rowIndex);
 
-            // Uncheck the current row entries
-            for (const entry of uncheckedRowEntries) {
-                await updateEntry(entry.id, { checked: false });
-            }
-
-            // Reorder: assign new rowIndex sequentially
+            // Calculate new indices
             let newRowIndex = 0;
-
-            // First, reassign all other rows in order
+            const newIndices = new Map<number, number>();
+            
             for (const oldRowIndex of otherRowIndices) {
-                const rowEntries = rowGroups.get(oldRowIndex)!;
-                for (const entry of rowEntries) {
-                    await updateEntry(entry.id, { rowIndex: newRowIndex });
-                }
+                newIndices.set(oldRowIndex, newRowIndex);
                 newRowIndex++;
             }
+            newIndices.set(rowIndex, newRowIndex);
 
-            // Finally, move unchecked row to the end
-            for (const entry of uncheckedRowEntries) {
-                await updateEntry(entry.id, { rowIndex: newRowIndex });
+            // Optimistic UI update - instant feedback
+            setEntries(prev => prev.map(e => {
+                if (e.side === side) {
+                    const newIdx = newIndices.get(e.rowIndex);
+                    if (newIdx !== undefined) {
+                        return {
+                            ...e,
+                            rowIndex: newIdx,
+                            checked: e.rowIndex === rowIndex ? false : e.checked
+                        };
+                    }
+                }
+                return e;
+            }));
+
+            // Send all API calls in parallel
+            const updatePromises: Promise<void>[] = [];
+            
+            // Uncheck current row
+            uncheckedRowEntries.forEach(entry => {
+                updatePromises.push(updateEntry(entry.id, { checked: false }));
+            });
+
+            // Reorder all rows
+            for (const oldRowIndex of otherRowIndices) {
+                const rowEntries = rowGroups.get(oldRowIndex)!;
+                const targetIndex = newIndices.get(oldRowIndex)!;
+                rowEntries.forEach(entry => {
+                    updatePromises.push(updateEntry(entry.id, { rowIndex: targetIndex }));
+                });
             }
 
-            fetchEntries();
+            // Move unchecked row to end
+            const finalIndex = newIndices.get(rowIndex)!;
+            uncheckedRowEntries.forEach(entry => {
+                updatePromises.push(updateEntry(entry.id, { rowIndex: finalIndex }));
+            });
+
+            // Wait for all in parallel
+            await Promise.all(updatePromises);
         }
     };
 
     // Delete (clear) entry
     const clearEntry = async (id: number) => {
         try {
+            // Optimistic update - instant feedback
+            setEntries(prev => prev.map(e => 
+                e.id === id ? { ...e, text: '' } : e
+            ));
+
             const response = await fetch(`/api/queue/${id}`, {
                 method: 'DELETE'
             });
@@ -305,9 +345,6 @@ export default function QueueBoard() {
                 console.warn('Rate limited on delete');
                 return;
             }
-
-            fetchEntries();
-            if (showHistory) fetchHistory();
         } catch (error) {
             console.error('Error clearing entry:', error);
         }
