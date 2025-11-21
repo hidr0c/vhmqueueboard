@@ -1,24 +1,28 @@
 -- CreateTable
 CREATE TABLE "QueueEntry" (
-    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "id" SERIAL NOT NULL,
     "rowIndex" INTEGER NOT NULL,
     "side" TEXT NOT NULL,
     "position" TEXT NOT NULL,
     "text" TEXT NOT NULL DEFAULT '',
-    "checked" BOOLEAN NOT NULL DEFAULT true,
-    "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    "checked" BOOLEAN NOT NULL DEFAULT false,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "QueueEntry_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "HistoryLog" (
-    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "id" SERIAL NOT NULL,
     "rowIndex" INTEGER NOT NULL,
     "side" TEXT NOT NULL,
     "position" TEXT NOT NULL,
     "action" TEXT NOT NULL,
     "oldValue" TEXT,
     "newValue" TEXT,
-    "timestamp" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    "timestamp" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "HistoryLog_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex

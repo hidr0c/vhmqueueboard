@@ -1,24 +1,22 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("PRISMA_DATABASE_URL")
+  directUrl = env("POSTGRES_URL")
 }
 
 model QueueEntry {
   id        Int      @id @default(autoincrement())
-  rowIndex  Int      // 0-11 for 12 rows
-  side      String   // "left" or "right" for Cab trái or Cab phải
-  position  String   // "P1" or "P2"
+  rowIndex  Int
+  side      String
+  position  String
   text      String   @default("")
   checked   Boolean  @default(true)
   updatedAt DateTime @default(now())
-  
+
   @@unique([rowIndex, side, position])
 }
 
@@ -27,7 +25,7 @@ model HistoryLog {
   rowIndex  Int
   side      String
   position  String
-  action    String   // "checked" or "unchecked" or "text_changed"
+  action    String
   oldValue  String?
   newValue  String?
   timestamp DateTime @default(now())
