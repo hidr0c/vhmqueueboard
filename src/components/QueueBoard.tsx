@@ -242,9 +242,13 @@ export default function QueueBoard() {
         // Mark as interacting to prevent polling override
         isInteractingRef.current = true;
 
+        // Capture fresh state
+        let currentEntries: QueueEntry[] = [];
+
         if (checked) {
             // When checking: uncheck all others in the same cab, check this one
             setEntries(prev => {
+                currentEntries = prev; // Capture FRESH state!
                 console.log(`[DEBUG] Before setEntries (checking): ${prev.filter(e => e.side === side).map(e => `row${e.rowIndex}:${e.checked}`).join(', ')}`);
                 const updated = prev.map(e => {
                     if (e.side === side) {
@@ -260,8 +264,21 @@ export default function QueueBoard() {
                 return updated;
             });
 
+            // DEDUPLICATE: Keep only latest entry per (rowIndex, side, position)
+            const seenKeys = new Map<string, QueueEntry>();
+            currentEntries.forEach(entry => {
+                const key = `${entry.rowIndex}-${entry.side}-${entry.position}`;
+                const existing = seenKeys.get(key);
+                // Keep entry with larger ID (newer)
+                if (!existing || entry.id > existing.id) {
+                    seenKeys.set(key, entry);
+                }
+            });
+            const uniqueEntries = Array.from(seenKeys.values());
+            console.log(`[DEBUG] Deduplicated: ${currentEntries.length} -> ${uniqueEntries.length} entries`);
+
             // Send API calls: check this row, uncheck all others in the cab
-            const entriesInSide = entries.filter(e => e.side === side);
+            const entriesInSide = uniqueEntries.filter(e => e.side === side);
             console.log(`[DEBUG] Sending API calls for ${entriesInSide.length} entries in side ${side}`);
             const updatePromises = entriesInSide.map(entry => {
                 const shouldCheck = entry.rowIndex === rowIndex;
@@ -285,6 +302,7 @@ export default function QueueBoard() {
         } else {
             // When unchecking: just uncheck this row
             setEntries(prev => {
+                currentEntries = prev; // Capture FRESH state!
                 console.log(`[DEBUG] Before setEntries (unchecking): ${prev.filter(e => e.side === side).map(e => `row${e.rowIndex}:${e.checked}`).join(', ')}`);
                 const updated = prev.map(e => {
                     if (e.side === side && e.rowIndex === rowIndex) {
@@ -296,7 +314,19 @@ export default function QueueBoard() {
                 return updated;
             });
 
-            const entriesToUpdate = entries.filter(e => e.side === side && e.rowIndex === rowIndex);
+            // DEDUPLICATE
+            const seenKeys = new Map<string, QueueEntry>();
+            currentEntries.forEach(entry => {
+                const key = `${entry.rowIndex}-${entry.side}-${entry.position}`;
+                const existing = seenKeys.get(key);
+                if (!existing || entry.id > existing.id) {
+                    seenKeys.set(key, entry);
+                }
+            });
+            const uniqueEntries = Array.from(seenKeys.values());
+            console.log(`[DEBUG] Deduplicated: ${currentEntries.length} -> ${uniqueEntries.length} entries`);
+
+            const entriesToUpdate = uniqueEntries.filter(e => e.side === side && e.rowIndex === rowIndex);
             console.log(`[DEBUG] Sending API calls for ${entriesToUpdate.length} entries to uncheck`);
             const updatePromises = entriesToUpdate.map(entry => {
                 console.log(`[DEBUG] API call: entry ${entry.id} (row${entry.rowIndex}) -> checked: false`);
