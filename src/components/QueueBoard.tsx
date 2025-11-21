@@ -236,17 +236,17 @@ export default function QueueBoard() {
 
     // Handle checkbox change - only one checked per cab
     const handleCheckboxChange = async (rowIndex: number, side: string, checked: boolean) => {
+        console.log(`[DEBUG] handleCheckboxChange: rowIndex=${rowIndex}, side=${side}, checked=${checked}`);
+        console.log(`[DEBUG] Current entries count: ${entries.length}`);
+
         // Mark as interacting to prevent polling override
         isInteractingRef.current = true;
-
-        // Capture current entries from state (not closure!)
-        let currentEntries: QueueEntry[] = [];
 
         if (checked) {
             // When checking: uncheck all others in the same cab, check this one
             setEntries(prev => {
-                currentEntries = prev; // Capture fresh state
-                return prev.map(e => {
+                console.log(`[DEBUG] Before setEntries (checking): ${prev.filter(e => e.side === side).map(e => `row${e.rowIndex}:${e.checked}`).join(', ')}`);
+                const updated = prev.map(e => {
                     if (e.side === side) {
                         if (e.rowIndex === rowIndex) {
                             return { ...e, checked: true };
@@ -256,55 +256,72 @@ export default function QueueBoard() {
                     }
                     return e;
                 });
+                console.log(`[DEBUG] After setEntries (checking): ${updated.filter(e => e.side === side).map(e => `row${e.rowIndex}:${e.checked}`).join(', ')}`);
+                return updated;
             });
 
-            // Send API calls directly using FRESH entries from state
-            const entriesToUpdate = currentEntries.filter(e => e.side === side);
-            const updatePromises = entriesToUpdate.map(entry => {
-                if (entry.rowIndex === rowIndex) {
-                    return fetch(`/api/queue/${entry.id}`, {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ checked: true })
-                    });
-                } else if (entry.checked) {
-                    return fetch(`/api/queue/${entry.id}`, {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ checked: false })
-                    });
-                }
-                return Promise.resolve();
+            // Send API calls: check this row, uncheck all others in the cab
+            const entriesInSide = entries.filter(e => e.side === side);
+            console.log(`[DEBUG] Sending API calls for ${entriesInSide.length} entries in side ${side}`);
+            const updatePromises = entriesInSide.map(entry => {
+                const shouldCheck = entry.rowIndex === rowIndex;
+                console.log(`[DEBUG] API call: entry ${entry.id} (row${entry.rowIndex}) -> checked: ${shouldCheck}`);
+                return fetch(`/api/queue/${entry.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ checked: shouldCheck })
+                }).catch(error => {
+                    console.error(`[DEBUG] API call failed for entry ${entry.id}:`, error);
+                    return Promise.reject(error);
+                });
             });
 
-            await Promise.all(updatePromises);
+            try {
+                await Promise.all(updatePromises);
+                console.log(`[DEBUG] All API calls completed successfully`);
+            } catch (error) {
+                console.error(`[DEBUG] Some API calls failed:`, error);
+            }
         } else {
             // When unchecking: just uncheck this row
             setEntries(prev => {
-                currentEntries = prev; // Capture fresh state
-                return prev.map(e => {
+                console.log(`[DEBUG] Before setEntries (unchecking): ${prev.filter(e => e.side === side).map(e => `row${e.rowIndex}:${e.checked}`).join(', ')}`);
+                const updated = prev.map(e => {
                     if (e.side === side && e.rowIndex === rowIndex) {
                         return { ...e, checked: false };
                     }
                     return e;
                 });
+                console.log(`[DEBUG] After setEntries (unchecking): ${updated.filter(e => e.side === side).map(e => `row${e.rowIndex}:${e.checked}`).join(', ')}`);
+                return updated;
             });
 
-            const entriesToUpdate = currentEntries.filter(e => e.side === side && e.rowIndex === rowIndex);
-            const updatePromises = entriesToUpdate.map(entry =>
-                fetch(`/api/queue/${entry.id}`, {
+            const entriesToUpdate = entries.filter(e => e.side === side && e.rowIndex === rowIndex);
+            console.log(`[DEBUG] Sending API calls for ${entriesToUpdate.length} entries to uncheck`);
+            const updatePromises = entriesToUpdate.map(entry => {
+                console.log(`[DEBUG] API call: entry ${entry.id} (row${entry.rowIndex}) -> checked: false`);
+                return fetch(`/api/queue/${entry.id}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ checked: false })
-                })
-            );
+                }).catch(error => {
+                    console.error(`[DEBUG] API call failed for entry ${entry.id}:`, error);
+                    return Promise.reject(error);
+                });
+            });
 
-            await Promise.all(updatePromises);
+            try {
+                await Promise.all(updatePromises);
+                console.log(`[DEBUG] All API calls completed successfully`);
+            } catch (error) {
+                console.error(`[DEBUG] Some API calls failed:`, error);
+            }
         }
 
         // Reset interaction flag after a delay
         setTimeout(() => {
             isInteractingRef.current = false;
+            console.log(`[DEBUG] Interaction flag reset`);
         }, 1000);
     };
 
