@@ -239,21 +239,27 @@ export default function QueueBoard() {
         // Mark as interacting to prevent polling override
         isInteractingRef.current = true;
 
+        // Capture current entries from state (not closure!)
+        let currentEntries: QueueEntry[] = [];
+
         if (checked) {
             // When checking: uncheck all others in the same cab, check this one
-            setEntries(prev => prev.map(e => {
-                if (e.side === side) {
-                    if (e.rowIndex === rowIndex) {
-                        return { ...e, checked: true };
-                    } else if (e.checked) {
-                        return { ...e, checked: false };
+            setEntries(prev => {
+                currentEntries = prev; // Capture fresh state
+                return prev.map(e => {
+                    if (e.side === side) {
+                        if (e.rowIndex === rowIndex) {
+                            return { ...e, checked: true };
+                        } else if (e.checked) {
+                            return { ...e, checked: false };
+                        }
                     }
-                }
-                return e;
-            }));
+                    return e;
+                });
+            });
 
-            // Send API calls directly (NOT via updateEntry to avoid text loss)
-            const entriesToUpdate = entries.filter(e => e.side === side);
+            // Send API calls directly using FRESH entries from state
+            const entriesToUpdate = currentEntries.filter(e => e.side === side);
             const updatePromises = entriesToUpdate.map(entry => {
                 if (entry.rowIndex === rowIndex) {
                     return fetch(`/api/queue/${entry.id}`, {
@@ -274,14 +280,17 @@ export default function QueueBoard() {
             await Promise.all(updatePromises);
         } else {
             // When unchecking: just uncheck this row
-            setEntries(prev => prev.map(e => {
-                if (e.side === side && e.rowIndex === rowIndex) {
-                    return { ...e, checked: false };
-                }
-                return e;
-            }));
+            setEntries(prev => {
+                currentEntries = prev; // Capture fresh state
+                return prev.map(e => {
+                    if (e.side === side && e.rowIndex === rowIndex) {
+                        return { ...e, checked: false };
+                    }
+                    return e;
+                });
+            });
 
-            const entriesToUpdate = entries.filter(e => e.side === side && e.rowIndex === rowIndex);
+            const entriesToUpdate = currentEntries.filter(e => e.side === side && e.rowIndex === rowIndex);
             const updatePromises = entriesToUpdate.map(entry =>
                 fetch(`/api/queue/${entry.id}`, {
                     method: 'PATCH',
@@ -325,16 +334,25 @@ export default function QueueBoard() {
         // Mark as interacting
         isInteractingRef.current = true;
 
-        const p1Entry = getEntry(rowIndex, side, 'P1');
-        const p2Entry = getEntry(rowIndex, side, 'P2');
+        // Capture fresh entries from state
+        let currentEntries: QueueEntry[] = [];
+        setEntries(prev => {
+            currentEntries = prev;
+            return prev.map(e => {
+                if (e.side === side && e.rowIndex === rowIndex) {
+                    return { ...e, text: '' };
+                }
+                return e;
+            });
+        });
 
-        // Optimistic update both at once
-        setEntries(prev => prev.map(e => {
-            if (e.side === side && e.rowIndex === rowIndex) {
-                return { ...e, text: '' };
-            }
-            return e;
-        }));
+        // Find entries to delete from FRESH state
+        const p1Entry = currentEntries.find(
+            e => e.rowIndex === rowIndex && e.side === side && e.position === 'P1'
+        );
+        const p2Entry = currentEntries.find(
+            e => e.rowIndex === rowIndex && e.side === side && e.position === 'P2'
+        );
 
         // Delete both in parallel (not sequential!)
         const deletePromises = [];
