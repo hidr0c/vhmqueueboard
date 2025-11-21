@@ -1,11 +1,36 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { rateLimit, getClientIp } from "@/lib/rateLimit";
 
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Rate limiting: 30 requests per minute for updates
+    const ip = getClientIp(request);
+    const { success, remaining, resetTime } = rateLimit(
+      `patch-${ip}`,
+      30,
+      60000
+    );
+
+    if (!success) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again later." },
+        {
+          status: 429,
+          headers: {
+            "X-RateLimit-Remaining": remaining.toString(),
+            "X-RateLimit-Reset": new Date(resetTime).toISOString(),
+            "Retry-After": Math.ceil(
+              (resetTime - Date.now()) / 1000
+            ).toString(),
+          },
+        }
+      );
+    }
+
     const { id } = await params;
     const body = await request.json();
     const { text, checked } = body;
@@ -73,6 +98,30 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Rate limiting: 20 requests per minute for deletes
+    const ip = getClientIp(request);
+    const { success, remaining, resetTime } = rateLimit(
+      `delete-${ip}`,
+      20,
+      60000
+    );
+
+    if (!success) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again later." },
+        {
+          status: 429,
+          headers: {
+            "X-RateLimit-Remaining": remaining.toString(),
+            "X-RateLimit-Reset": new Date(resetTime).toISOString(),
+            "Retry-After": Math.ceil(
+              (resetTime - Date.now()) / 1000
+            ).toString(),
+          },
+        }
+      );
+    }
+
     const { id } = await params;
     const entryId = parseInt(id);
 

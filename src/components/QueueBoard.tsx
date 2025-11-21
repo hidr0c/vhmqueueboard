@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { normalizeToEnglish } from '@/lib/textUtils';
+import { debounce } from '@/lib/debounce';
 
 interface QueueEntry {
     id: number;
@@ -30,12 +31,25 @@ export default function QueueBoard() {
     const [showHistory, setShowHistory] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [isPolling, setIsPolling] = useState(true);
+    const abortControllerRef = useRef<AbortController | null>(null);
 
-    // Fetch entries
-    const fetchEntries = async () => {
+    // Fetch entries with abort signal
+    const fetchEntries = async (signal?: AbortSignal) => {
         try {
-            const response = await fetch('/api/queue');
+            const response = await fetch('/api/queue', { signal });
             const data = await response.json();
+
+            // Handle rate limiting
+            if (response.status === 429) {
+                console.warn('Rate limited:', data.error);
+                const retryAfter = response.headers.get('Retry-After');
+                if (retryAfter) {
+                    setError(`Rate limit exceeded. Retry in ${retryAfter}s`);
+                    setTimeout(() => setError(null), parseInt(retryAfter) * 1000);
+                }
+                return;
+            }
 
             // Check if API returned an error
             if (!response.ok || data.error) {
@@ -55,7 +69,11 @@ export default function QueueBoard() {
                 setError('Invalid data format received from server');
             }
             setLoading(false);
-        } catch (error) {
+        } catch (error: any) {
+            if (error.name === 'AbortError') {
+                // Request was aborted, ignore
+                return;
+            }
             console.error('Error fetching entries:', error);
             setError('Cannot connect to server. Please check your internet connection.');
             setEntries([]);
@@ -63,11 +81,17 @@ export default function QueueBoard() {
         }
     };
 
-    // Fetch history
-    const fetchHistory = async () => {
+    // Fetch history with abort signal
+    const fetchHistory = async (signal?: AbortSignal) => {
         try {
-            const response = await fetch('/api/history');
+            const response = await fetch('/api/history', { signal });
             const data = await response.json();
+
+            // Handle rate limiting
+            if (response.status === 429) {
+                console.warn('Rate limited on history:', data.error);
+                return;
+            }
 
             // Ensure data is an array before setting
             if (Array.isArray(data)) {
@@ -76,7 +100,10 @@ export default function QueueBoard() {
                 console.error('API returned non-array data:', data);
                 setHistory([]);
             }
-        } catch (error) {
+        } catch (error: any) {
+            if (error.name === 'AbortError') {
+                return;
+            }
             console.error('Error fetching history:', error);
             setHistory([]);
         }
@@ -109,33 +136,86 @@ export default function QueueBoard() {
         };
 
         initializeData();
+
+        // Cleanup on unmount
+        return () => {
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
+        };
     }, []);
 
-    // Real-time polling
+    // Smart polling with abort controller
     useEffect(() => {
-        const interval = setInterval(() => {
-            fetchEntries();
-            if (showHistory) {
-                fetchHistory();
-            }
-        }, 2000); // Poll every 2 seconds
+        if (!isPolling) return;
 
-        return () => clearInterval(interval);
-    }, [showHistory]);
+        const interval = setInterval(() => {
+            // Cancel previous request if still pending
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
+
+            // Create new abort controller
+            abortControllerRef.current = new AbortController();
+
+            fetchEntries(abortControllerRef.current.signal);
+            if (showHistory) {
+                fetchHistory(abortControllerRef.current.signal);
+            }
+        }, 3000); // Poll every 3 seconds (reduced from 2s)
+
+        return () => {
+            clearInterval(interval);
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
+        };
+    }, [showHistory, isPolling]);
 
     // Update entry
     const updateEntry = async (id: number, updates: Partial<QueueEntry>) => {
         try {
-            await fetch(`/api/queue/${id}`, {
+            const response = await fetch(`/api/queue/${id}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(updates)
             });
-            fetchEntries();
-            fetchHistory();
+
+            if (response.status === 429) {
+                console.warn('Rate limited on update');
+                return;
+            }
+
+            // Optimistic update
+            setEntries(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
+
+            // Refresh from server after a delay
+            setTimeout(() => {
+                fetchEntries();
+                if (showHistory) fetchHistory();
+            }, 500);
         } catch (error) {
             console.error('Error updating entry:', error);
         }
+    };
+
+    // Debounced text update to reduce API calls
+    const debouncedUpdateText = useCallback(
+        debounce((id: number, text: string) => {
+            updateEntry(id, { text });
+        }, 800), // Wait 800ms after user stops typing
+        []
+    );
+
+    // Handle text input with normalization and debouncing
+    const handleTextInput = (id: number, rawText: string) => {
+        const normalized = normalizeToEnglish(rawText);
+
+        // Update UI immediately for responsive feel
+        setEntries(prev => prev.map(e => e.id === id ? { ...e, text: normalized } : e));
+
+        // Debounce the actual API call
+        debouncedUpdateText(id, normalized);
     };
 
     // Handle checkbox change with single selection per cab and reordering
@@ -202,11 +282,17 @@ export default function QueueBoard() {
     // Delete (clear) entry
     const clearEntry = async (id: number) => {
         try {
-            await fetch(`/api/queue/${id}`, {
+            const response = await fetch(`/api/queue/${id}`, {
                 method: 'DELETE'
             });
+
+            if (response.status === 429) {
+                console.warn('Rate limited on delete');
+                return;
+            }
+
             fetchEntries();
-            fetchHistory();
+            if (showHistory) fetchHistory();
         } catch (error) {
             console.error('Error clearing entry:', error);
         }
@@ -219,12 +305,6 @@ export default function QueueBoard() {
 
         if (p1Entry) await clearEntry(p1Entry.id);
         if (p2Entry) await clearEntry(p2Entry.id);
-    };
-
-    // Handle text input with normalization
-    const handleTextInput = (id: number, rawText: string) => {
-        const normalized = normalizeToEnglish(rawText);
-        updateEntry(id, { text: normalized });
     };
 
     // Get entry by position
@@ -297,15 +377,27 @@ export default function QueueBoard() {
         <div className="container mx-auto p-4 max-w-7xl bg-white min-h-screen">
             <div className="flex justify-between items-center mb-6">
                 <h1 className="text-3xl font-bold text-gray-800">Bảng Hàng Đợi VHM</h1>
-                <button
-                    onClick={() => {
-                        setShowHistory(!showHistory);
-                        if (!showHistory) fetchHistory();
-                    }}
-                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
-                >
-                    {showHistory ? 'Ẩn lịch sử' : 'Xem lịch sử'}
-                </button>
+                <div className="flex gap-2">
+                    <button
+                        onClick={() => setIsPolling(!isPolling)}
+                        className={`px-4 py-2 rounded transition ${isPolling
+                                ? 'bg-green-600 text-white hover:bg-green-700'
+                                : 'bg-gray-600 text-white hover:bg-gray-700'
+                            }`}
+                        title={isPolling ? 'Tự động cập nhật: BẬT' : 'Tự động cập nhật: TẮT'}
+                    >
+                        {isPolling ? '🔄 Đang cập nhật' : '⏸️ Đã tạm dừng'}
+                    </button>
+                    <button
+                        onClick={() => {
+                            setShowHistory(!showHistory);
+                            if (!showHistory) fetchHistory();
+                        }}
+                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+                    >
+                        {showHistory ? 'Ẩn lịch sử' : 'Xem lịch sử'}
+                    </button>
+                </div>
             </div>
 
             <div className="grid grid-cols-2 gap-6 mb-8">
