@@ -245,7 +245,7 @@ export default function QueueBoard() {
 
         // Send API calls for this row only
         const entriesToUpdate = entries.filter(e => e.side === side && e.rowIndex === rowIndex);
-        const updatePromises = entriesToUpdate.map(entry => 
+        const updatePromises = entriesToUpdate.map(entry =>
             updateEntry(entry.id, { checked })
         );
 
