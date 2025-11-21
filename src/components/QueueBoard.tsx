@@ -348,15 +348,18 @@ export default function QueueBoard() {
             }
         }
 
-        // Reset interaction flag after a delay
+        // Reset interaction flag after delay (2s buffer for API completion)
         setTimeout(() => {
             isInteractingRef.current = false;
             console.log(`[DEBUG] Interaction flag reset`);
-        }, 1000);
+        }, 2000);
     };
 
     // Delete (clear) entry - only clear the text, keep the entry
     const clearEntry = async (id: number) => {
+        // Mark as interacting
+        isInteractingRef.current = true;
+
         try {
             // Optimistic update - clear text only, keep entry structure
             setEntries(prev => prev.map(e =>
@@ -369,10 +372,23 @@ export default function QueueBoard() {
 
             if (response.status === 429) {
                 console.warn('Rate limited on delete');
+                isInteractingRef.current = false;
                 return;
             }
+
+            // Wait a bit for database to process DELETE
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            // Force refresh to sync with database
+            console.log('[DEBUG] Force refresh after clearEntry');
+            await fetchEntries();
+
+            // NOW it's safe to allow polling again
+            console.log('[DEBUG] clearEntry complete, reset flag');
+            isInteractingRef.current = false;
         } catch (error) {
             console.error('Error clearing entry:', error);
+            isInteractingRef.current = false;
         }
     };
 
@@ -416,10 +432,16 @@ export default function QueueBoard() {
 
         await Promise.all(deletePromises);
 
-        // Reset interaction flag
-        setTimeout(() => {
-            isInteractingRef.current = false;
-        }, 1000);
+        // Wait for database to process DELETEs
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Force refresh from database to sync state
+        console.log('[DEBUG] Force refresh after clearRow');
+        await fetchEntries();
+
+        // NOW it's safe to allow polling
+        console.log('[DEBUG] clearRow complete, reset flag');
+        isInteractingRef.current = false;
     };
 
     // Get entry by position
