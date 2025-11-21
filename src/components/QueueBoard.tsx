@@ -233,100 +233,24 @@ export default function QueueBoard() {
         debouncedUpdateText(id, normalized);
     };
 
-    // Handle checkbox change with single selection per cab and reordering
+    // Handle checkbox change - simple check/uncheck only (NO reordering)
     const handleCheckboxChange = async (rowIndex: number, side: string, checked: boolean) => {
-        if (checked) {
-            // Optimistic update - instant UI feedback
-            setEntries(prev => prev.map(e => {
-                if (e.side === side) {
-                    if (e.rowIndex === rowIndex) {
-                        return { ...e, checked: true };
-                    } else if (e.checked) {
-                        return { ...e, checked: false };
-                    }
-                }
-                return e;
-            }));
-
-            // Send API calls in parallel (not sequential)
-            const entriesToUpdate = entries.filter(e => e.side === side);
-            const updatePromises = entriesToUpdate.map(entry => {
-                if (entry.rowIndex === rowIndex) {
-                    return updateEntry(entry.id, { checked: true });
-                } else if (entry.checked) {
-                    return updateEntry(entry.id, { checked: false });
-                }
-                return Promise.resolve();
-            });
-
-            // Wait for all updates to complete
-            await Promise.all(updatePromises);
-        } else {
-            // Optimistic update for unchecking and reordering
-            const sideEntries = entries.filter(e => e.side === side);
-            const rowGroups = new Map<number, QueueEntry[]>();
-            sideEntries.forEach(entry => {
-                if (!rowGroups.has(entry.rowIndex)) {
-                    rowGroups.set(entry.rowIndex, []);
-                }
-                rowGroups.get(entry.rowIndex)!.push(entry);
-            });
-
-            const sortedRowIndices = Array.from(rowGroups.keys()).sort((a, b) => a - b);
-            const uncheckedRowEntries = rowGroups.get(rowIndex) || [];
-            const otherRowIndices = sortedRowIndices.filter(idx => idx !== rowIndex);
-
-            // Calculate new indices
-            let newRowIndex = 0;
-            const newIndices = new Map<number, number>();
-
-            for (const oldRowIndex of otherRowIndices) {
-                newIndices.set(oldRowIndex, newRowIndex);
-                newRowIndex++;
+        // Optimistic update - instant UI feedback
+        setEntries(prev => prev.map(e => {
+            if (e.side === side && e.rowIndex === rowIndex) {
+                return { ...e, checked };
             }
-            newIndices.set(rowIndex, newRowIndex);
+            return e;
+        }));
 
-            // Optimistic UI update - instant feedback (PRESERVE TEXT!)
-            setEntries(prev => prev.map(e => {
-                if (e.side === side) {
-                    const newIdx = newIndices.get(e.rowIndex);
-                    if (newIdx !== undefined) {
-                        return {
-                            ...e, // Keep all existing data including text!
-                            rowIndex: newIdx,
-                            checked: e.rowIndex === rowIndex ? false : e.checked
-                        };
-                    }
-                }
-                return e;
-            }));
+        // Send API calls for this row only
+        const entriesToUpdate = entries.filter(e => e.side === side && e.rowIndex === rowIndex);
+        const updatePromises = entriesToUpdate.map(entry => 
+            updateEntry(entry.id, { checked })
+        );
 
-            // Send all API calls in parallel
-            const updatePromises: Promise<void>[] = [];
-
-            // Uncheck current row
-            uncheckedRowEntries.forEach(entry => {
-                updatePromises.push(updateEntry(entry.id, { checked: false }));
-            });
-
-            // Reorder all rows
-            for (const oldRowIndex of otherRowIndices) {
-                const rowEntries = rowGroups.get(oldRowIndex)!;
-                const targetIndex = newIndices.get(oldRowIndex)!;
-                rowEntries.forEach(entry => {
-                    updatePromises.push(updateEntry(entry.id, { rowIndex: targetIndex }));
-                });
-            }
-
-            // Move unchecked row to end
-            const finalIndex = newIndices.get(rowIndex)!;
-            uncheckedRowEntries.forEach(entry => {
-                updatePromises.push(updateEntry(entry.id, { rowIndex: finalIndex }));
-            });
-
-            // Wait for all in parallel
-            await Promise.all(updatePromises);
-        }
+        // Wait for all updates to complete
+        await Promise.all(updatePromises);
     };
 
     // Delete (clear) entry - only clear the text, keep the entry
@@ -458,8 +382,8 @@ export default function QueueBoard() {
 
                         return (
                             <div key={`left-${rowIndex}`} className="mb-3">
-                                {/* Row with checkbox, P1 with delete, P2 with delete, and delete row */}
-                                <div className="grid grid-cols-[auto_1fr_auto_1fr_auto_auto] gap-2 items-center">
+                                {/* Row with checkbox, P1, P2, and single delete button */}
+                                <div className="grid grid-cols-[auto_1fr_1fr_auto] gap-2 items-center">
                                     {/* Checkbox */}
                                     <input
                                         type="checkbox"
@@ -479,15 +403,6 @@ export default function QueueBoard() {
                                         />
                                     </div>
 
-                                    {/* Delete P1 Button */}
-                                    <button
-                                        onClick={() => clearEntry(p1Entry.id)}
-                                        className="px-2 py-2 bg-orange-500 text-white rounded hover:bg-orange-600 font-semibold text-xs"
-                                        title="Xóa P1"
-                                    >
-                                        ✕
-                                    </button>
-
                                     {/* P2 Input */}
                                     <div className="border-2 border-gray-400 rounded p-2 bg-white shadow-sm">
                                         <input
@@ -499,22 +414,13 @@ export default function QueueBoard() {
                                         />
                                     </div>
 
-                                    {/* Delete P2 Button */}
-                                    <button
-                                        onClick={() => clearEntry(p2Entry.id)}
-                                        className="px-2 py-2 bg-orange-500 text-white rounded hover:bg-orange-600 font-semibold text-xs"
-                                        title="Xóa P2"
-                                    >
-                                        ✕
-                                    </button>
-
-                                    {/* Delete Entire Row Button */}
+                                    {/* Delete Row Button */}
                                     <button
                                         onClick={() => clearRow(rowIndex, 'left')}
                                         className="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700 font-semibold text-sm"
                                         title="Xóa cả hàng"
                                     >
-                                        ✕✕
+                                        ✕
                                     </button>
                                 </div>
                             </div>
@@ -539,8 +445,8 @@ export default function QueueBoard() {
 
                         return (
                             <div key={`right-${rowIndex}`} className="mb-3">
-                                {/* Row with checkbox, P1 with delete, P2 with delete, and delete row */}
-                                <div className="grid grid-cols-[auto_1fr_auto_1fr_auto_auto] gap-2 items-center">
+                                {/* Row with checkbox, P1, P2, and single delete button */}
+                                <div className="grid grid-cols-[auto_1fr_1fr_auto] gap-2 items-center">
                                     {/* Checkbox */}
                                     <input
                                         type="checkbox"
@@ -560,15 +466,6 @@ export default function QueueBoard() {
                                         />
                                     </div>
 
-                                    {/* Delete P1 Button */}
-                                    <button
-                                        onClick={() => clearEntry(p1Entry.id)}
-                                        className="px-2 py-2 bg-orange-500 text-white rounded hover:bg-orange-600 font-semibold text-xs"
-                                        title="Xóa P1"
-                                    >
-                                        ✕
-                                    </button>
-
                                     {/* P2 Input */}
                                     <div className="border-2 border-gray-400 rounded p-2 bg-white shadow-sm">
                                         <input
@@ -580,22 +477,13 @@ export default function QueueBoard() {
                                         />
                                     </div>
 
-                                    {/* Delete P2 Button */}
-                                    <button
-                                        onClick={() => clearEntry(p2Entry.id)}
-                                        className="px-2 py-2 bg-orange-500 text-white rounded hover:bg-orange-600 font-semibold text-xs"
-                                        title="Xóa P2"
-                                    >
-                                        ✕
-                                    </button>
-
-                                    {/* Delete Entire Row Button */}
+                                    {/* Delete Row Button */}
                                     <button
                                         onClick={() => clearRow(rowIndex, 'right')}
                                         className="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700 font-semibold text-sm"
                                         title="Xóa cả hàng"
                                     >
-                                        ✕✕
+                                        ✕
                                     </button>
                                 </div>
                             </div>
