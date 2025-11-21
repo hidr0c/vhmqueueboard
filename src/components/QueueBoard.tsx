@@ -33,6 +33,8 @@ export default function QueueBoard() {
     const [error, setError] = useState<string | null>(null);
     const [isPolling, setIsPolling] = useState(true);
     const abortControllerRef = useRef<AbortController | null>(null);
+    const isTypingRef = useRef<boolean>(false);
+    const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     // Fetch entries with abort signal
     const fetchEntries = async (signal?: AbortSignal) => {
@@ -61,7 +63,10 @@ export default function QueueBoard() {
 
             // Ensure data is an array before setting
             if (Array.isArray(data)) {
-                setEntries(data);
+                // Only update if user is not currently typing to avoid interruption
+                if (!isTypingRef.current) {
+                    setEntries(data);
+                }
                 setError(null);
             } else {
                 console.error('API returned non-array data:', data);
@@ -142,6 +147,9 @@ export default function QueueBoard() {
             if (abortControllerRef.current) {
                 abortControllerRef.current.abort();
             }
+            if (typingTimeoutRef.current) {
+                clearTimeout(typingTimeoutRef.current);
+            }
         };
     }, []);
 
@@ -162,7 +170,7 @@ export default function QueueBoard() {
             if (showHistory) {
                 fetchHistory(abortControllerRef.current.signal);
             }
-        }, 3000); // Poll every 3 seconds (reduced from 2s)
+        }, 5000); // Poll every 5 seconds for smoother input experience
 
         return () => {
             clearInterval(interval);
@@ -186,14 +194,8 @@ export default function QueueBoard() {
                 return;
             }
 
-            // Optimistic update
+            // Optimistic update only - let polling handle sync
             setEntries(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
-
-            // Refresh from server after a delay
-            setTimeout(() => {
-                fetchEntries();
-                if (showHistory) fetchHistory();
-            }, 500);
         } catch (error) {
             console.error('Error updating entry:', error);
         }
@@ -203,13 +205,26 @@ export default function QueueBoard() {
     const debouncedUpdateText = useCallback(
         debounce((id: number, text: string) => {
             updateEntry(id, { text });
-        }, 800), // Wait 800ms after user stops typing
+        }, 500), // Wait 500ms after user stops typing - faster response
         []
     );
 
     // Handle text input with normalization and debouncing
     const handleTextInput = (id: number, rawText: string) => {
         const normalized = normalizeToEnglish(rawText);
+
+        // Mark as typing to prevent polling from overwriting
+        isTypingRef.current = true;
+
+        // Clear previous timeout
+        if (typingTimeoutRef.current) {
+            clearTimeout(typingTimeoutRef.current);
+        }
+
+        // Set timeout to mark typing as done after user stops
+        typingTimeoutRef.current = setTimeout(() => {
+            isTypingRef.current = false;
+        }, 1000);
 
         // Update UI immediately for responsive feel
         setEntries(prev => prev.map(e => e.id === id ? { ...e, text: normalized } : e));
@@ -377,27 +392,15 @@ export default function QueueBoard() {
         <div className="container mx-auto p-4 max-w-7xl bg-white min-h-screen">
             <div className="flex justify-between items-center mb-6">
                 <h1 className="text-3xl font-bold text-gray-800">Bảng Hàng Đợi VHM</h1>
-                <div className="flex gap-2">
-                    <button
-                        onClick={() => setIsPolling(!isPolling)}
-                        className={`px-4 py-2 rounded transition ${isPolling
-                                ? 'bg-green-600 text-white hover:bg-green-700'
-                                : 'bg-gray-600 text-white hover:bg-gray-700'
-                            }`}
-                        title={isPolling ? 'Tự động cập nhật: BẬT' : 'Tự động cập nhật: TẮT'}
-                    >
-                        {isPolling ? '🔄 Đang cập nhật' : '⏸️ Đã tạm dừng'}
-                    </button>
-                    <button
-                        onClick={() => {
-                            setShowHistory(!showHistory);
-                            if (!showHistory) fetchHistory();
-                        }}
-                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
-                    >
-                        {showHistory ? 'Ẩn lịch sử' : 'Xem lịch sử'}
-                    </button>
-                </div>
+                <button
+                    onClick={() => {
+                        setShowHistory(!showHistory);
+                        if (!showHistory) fetchHistory();
+                    }}
+                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+                >
+                    {showHistory ? 'Ẩn lịch sử' : 'Xem lịch sử'}
+                </button>
             </div>
 
             <div className="grid grid-cols-2 gap-6 mb-8">
