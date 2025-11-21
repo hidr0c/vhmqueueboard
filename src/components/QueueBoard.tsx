@@ -233,24 +233,49 @@ export default function QueueBoard() {
         debouncedUpdateText(id, normalized);
     };
 
-    // Handle checkbox change - simple check/uncheck only (NO reordering)
+    // Handle checkbox change - only one checked per cab
     const handleCheckboxChange = async (rowIndex: number, side: string, checked: boolean) => {
-        // Optimistic update - instant UI feedback
-        setEntries(prev => prev.map(e => {
-            if (e.side === side && e.rowIndex === rowIndex) {
-                return { ...e, checked };
-            }
-            return e;
-        }));
+        if (checked) {
+            // When checking: uncheck all others in the same cab, check this one
+            setEntries(prev => prev.map(e => {
+                if (e.side === side) {
+                    if (e.rowIndex === rowIndex) {
+                        return { ...e, checked: true };
+                    } else if (e.checked) {
+                        return { ...e, checked: false };
+                    }
+                }
+                return e;
+            }));
 
-        // Send API calls for this row only
-        const entriesToUpdate = entries.filter(e => e.side === side && e.rowIndex === rowIndex);
-        const updatePromises = entriesToUpdate.map(entry =>
-            updateEntry(entry.id, { checked })
-        );
+            // Send API calls: uncheck others, check this one
+            const entriesToUpdate = entries.filter(e => e.side === side);
+            const updatePromises = entriesToUpdate.map(entry => {
+                if (entry.rowIndex === rowIndex) {
+                    return updateEntry(entry.id, { checked: true });
+                } else if (entry.checked) {
+                    return updateEntry(entry.id, { checked: false });
+                }
+                return Promise.resolve();
+            });
 
-        // Wait for all updates to complete
-        await Promise.all(updatePromises);
+            await Promise.all(updatePromises);
+        } else {
+            // When unchecking: just uncheck this row
+            setEntries(prev => prev.map(e => {
+                if (e.side === side && e.rowIndex === rowIndex) {
+                    return { ...e, checked: false };
+                }
+                return e;
+            }));
+
+            const entriesToUpdate = entries.filter(e => e.side === side && e.rowIndex === rowIndex);
+            const updatePromises = entriesToUpdate.map(entry =>
+                updateEntry(entry.id, { checked: false })
+            );
+
+            await Promise.all(updatePromises);
+        }
     };
 
     // Delete (clear) entry - only clear the text, keep the entry
