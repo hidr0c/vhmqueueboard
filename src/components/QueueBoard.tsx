@@ -35,6 +35,7 @@ export default function QueueBoard() {
     const abortControllerRef = useRef<AbortController | null>(null);
     const isTypingRef = useRef<boolean>(false);
     const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const isInteractingRef = useRef<boolean>(false); // Track any user interaction
 
     // Fetch entries with abort signal
     const fetchEntries = async (signal?: AbortSignal) => {
@@ -63,8 +64,8 @@ export default function QueueBoard() {
 
             // Ensure data is an array before setting
             if (Array.isArray(data)) {
-                // Only update if user is not currently typing to avoid interruption
-                if (!isTypingRef.current) {
+                // Only update if user is not typing or interacting to avoid interruption
+                if (!isTypingRef.current && !isInteractingRef.current) {
                     setEntries(data);
                 }
                 setError(null);
@@ -235,6 +236,9 @@ export default function QueueBoard() {
 
     // Handle checkbox change - only one checked per cab
     const handleCheckboxChange = async (rowIndex: number, side: string, checked: boolean) => {
+        // Mark as interacting to prevent polling override
+        isInteractingRef.current = true;
+
         if (checked) {
             // When checking: uncheck all others in the same cab, check this one
             setEntries(prev => prev.map(e => {
@@ -248,13 +252,21 @@ export default function QueueBoard() {
                 return e;
             }));
 
-            // Send API calls: uncheck others, check this one
+            // Send API calls directly (NOT via updateEntry to avoid text loss)
             const entriesToUpdate = entries.filter(e => e.side === side);
             const updatePromises = entriesToUpdate.map(entry => {
                 if (entry.rowIndex === rowIndex) {
-                    return updateEntry(entry.id, { checked: true });
+                    return fetch(`/api/queue/${entry.id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ checked: true })
+                    });
                 } else if (entry.checked) {
-                    return updateEntry(entry.id, { checked: false });
+                    return fetch(`/api/queue/${entry.id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ checked: false })
+                    });
                 }
                 return Promise.resolve();
             });
@@ -271,11 +283,20 @@ export default function QueueBoard() {
 
             const entriesToUpdate = entries.filter(e => e.side === side && e.rowIndex === rowIndex);
             const updatePromises = entriesToUpdate.map(entry =>
-                updateEntry(entry.id, { checked: false })
+                fetch(`/api/queue/${entry.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ checked: false })
+                })
             );
 
             await Promise.all(updatePromises);
         }
+
+        // Reset interaction flag after a delay
+        setTimeout(() => {
+            isInteractingRef.current = false;
+        }, 1000);
     };
 
     // Delete (clear) entry - only clear the text, keep the entry
@@ -299,13 +320,41 @@ export default function QueueBoard() {
         }
     };
 
-    // Clear entire row (both P1 and P2)
+    // Clear entire row (both P1 and P2) - parallel for speed
     const clearRow = async (rowIndex: number, side: string) => {
+        // Mark as interacting
+        isInteractingRef.current = true;
+
         const p1Entry = getEntry(rowIndex, side, 'P1');
         const p2Entry = getEntry(rowIndex, side, 'P2');
 
-        if (p1Entry) await clearEntry(p1Entry.id);
-        if (p2Entry) await clearEntry(p2Entry.id);
+        // Optimistic update both at once
+        setEntries(prev => prev.map(e => {
+            if (e.side === side && e.rowIndex === rowIndex) {
+                return { ...e, text: '' };
+            }
+            return e;
+        }));
+
+        // Delete both in parallel (not sequential!)
+        const deletePromises = [];
+        if (p1Entry) {
+            deletePromises.push(
+                fetch(`/api/queue/${p1Entry.id}`, { method: 'DELETE' })
+            );
+        }
+        if (p2Entry) {
+            deletePromises.push(
+                fetch(`/api/queue/${p2Entry.id}`, { method: 'DELETE' })
+            );
+        }
+
+        await Promise.all(deletePromises);
+
+        // Reset interaction flag
+        setTimeout(() => {
+            isInteractingRef.current = false;
+        }, 1000);
     };
 
     // Get entry by position
