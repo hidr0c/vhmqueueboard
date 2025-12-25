@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { normalizeToEnglish } from '@/lib/textUtils';
 import { debounce } from '@/lib/debounce';
+import Pusher from 'pusher-js';
 
 interface QueueEntry {
     id: number;
@@ -31,16 +32,17 @@ export default function QueueBoard() {
     const [showHistory, setShowHistory] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [isPolling, setIsPolling] = useState(true);
-    const abortControllerRef = useRef<AbortController | null>(null);
-    const isTypingRef = useRef<boolean>(false);
-    const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-    const isInteractingRef = useRef<boolean>(false); // Track any user interaction
+    const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+    const pusherRef = useRef<Pusher | null>(null);
+    // Per-entry tracking for race condition prevention
+    const pendingOpsRef = useRef<Set<number>>(new Set()); // Entry IDs with pending API calls
+    const lockedEntriesRef = useRef<Map<number, number>>(new Map()); // Entry ID -> lock timestamp
+    const lockedSidesRef = useRef<Map<string, number>>(new Map()); // Side -> lock timestamp (for checkbox)
 
-    // Fetch entries with abort signal
-    const fetchEntries = async (signal?: AbortSignal) => {
+    // Fetch entries (used for initial load only)
+    const fetchEntries = async () => {
         try {
-            const response = await fetch('/api/queue', { signal });
+            const response = await fetch('/api/queue');
             const data = await response.json();
 
             // Handle rate limiting
@@ -64,10 +66,7 @@ export default function QueueBoard() {
 
             // Ensure data is an array before setting
             if (Array.isArray(data)) {
-                // Only update if user is not typing or interacting to avoid interruption
-                if (!isTypingRef.current && !isInteractingRef.current) {
-                    setEntries(data);
-                }
+                setEntries(data);
                 setError(null);
             } else {
                 console.error('API returned non-array data:', data);
@@ -76,10 +75,6 @@ export default function QueueBoard() {
             }
             setLoading(false);
         } catch (error: any) {
-            if (error.name === 'AbortError') {
-                // Request was aborted, ignore
-                return;
-            }
             console.error('Error fetching entries:', error);
             setError('Cannot connect to server. Please check your internet connection.');
             setEntries([]);
@@ -87,10 +82,10 @@ export default function QueueBoard() {
         }
     };
 
-    // Fetch history with abort signal
-    const fetchHistory = async (signal?: AbortSignal) => {
+    // Fetch history (no changes needed here)
+    const fetchHistory = async () => {
         try {
-            const response = await fetch('/api/history', { signal });
+            const response = await fetch('/api/history');
             const data = await response.json();
 
             // Handle rate limiting
@@ -107,15 +102,12 @@ export default function QueueBoard() {
                 setHistory([]);
             }
         } catch (error: any) {
-            if (error.name === 'AbortError') {
-                return;
-            }
             console.error('Error fetching history:', error);
             setHistory([]);
         }
     };
 
-    // Initialize data on mount
+    // Initialize data and Pusher connection
     useEffect(() => {
         const initializeData = async () => {
             try {
@@ -143,46 +135,130 @@ export default function QueueBoard() {
 
         initializeData();
 
+        // Initialize Pusher (optional - app works without it)
+        const pusherKey = process.env.NEXT_PUBLIC_PUSHER_KEY;
+        const pusherCluster = process.env.NEXT_PUBLIC_PUSHER_CLUSTER;
+
+        if (!pusherKey || !pusherCluster) {
+            console.warn('⚠️ Pusher credentials not found. Real-time sync disabled.');
+            console.warn('To enable real-time sync, set NEXT_PUBLIC_PUSHER_KEY and NEXT_PUBLIC_PUSHER_CLUSTER');
+            console.warn('See PUSHER-SETUP.md for instructions');
+            setConnectionState('disconnected');
+            // App continues to work, just without real-time sync
+            return;
+        }
+
+        // Create Pusher instance
+        try {
+            pusherRef.current = new Pusher(pusherKey, {
+                cluster: pusherCluster,
+                forceTLS: true,
+            });
+        } catch (error) {
+            console.error('Failed to initialize Pusher:', error);
+            setConnectionState('disconnected');
+            return;
+        }
+
+        // Connection state handlers
+        pusherRef.current.connection.bind('connecting', () => {
+            console.log('Pusher connecting...');
+            setConnectionState('connecting');
+        });
+
+        pusherRef.current.connection.bind('connected', () => {
+            console.log('Pusher connected!');
+            setConnectionState('connected');
+        });
+
+        pusherRef.current.connection.bind('disconnected', () => {
+            console.log('Pusher disconnected');
+            setConnectionState('disconnected');
+        });
+
+        pusherRef.current.connection.bind('error', (err: any) => {
+            console.error('Pusher connection error:', err);
+            setConnectionState('disconnected');
+        });
+
+        // Subscribe to queue channel
+        const channel = pusherRef.current.subscribe('queue-channel');
+
+        // Listen for entry updates
+        channel.bind('entry-updated', (data: { entry: QueueEntry }) => {
+            const entryId = data.entry.id;
+            const entrySide = data.entry.side;
+            const now = Date.now();
+
+            // Skip if this entry has pending API operations
+            if (pendingOpsRef.current.has(entryId)) {
+                console.log('[Pusher] Skipped - pending operation for entry', entryId);
+                return;
+            }
+
+            // Skip if this entry is locked (recently interacted)
+            const entryLockTime = lockedEntriesRef.current.get(entryId);
+            if (entryLockTime && now - entryLockTime < 3000) {
+                console.log('[Pusher] Skipped - entry locked', entryId);
+                return;
+            }
+
+            // Skip if this side is locked (checkbox operation in progress)
+            const sideLockTime = lockedSidesRef.current.get(entrySide);
+            if (sideLockTime && now - sideLockTime < 3000) {
+                console.log('[Pusher] Skipped - side locked', entrySide);
+                return;
+            }
+
+            // Apply the update
+            setEntries(prev => {
+                // Check if this update is already applied (from optimistic update)
+                const current = prev.find(e => e.id === entryId);
+                if (current &&
+                    current.text === data.entry.text &&
+                    current.checked === data.entry.checked) {
+                    return prev;
+                }
+                return prev.map(e => e.id === entryId ? data.entry : e);
+            });
+        });
+
+        // Listen for full sync (e.g., after initialization)
+        channel.bind('sync-all', (data: { entries: QueueEntry[] }) => {
+            console.log('Received full sync:', data);
+
+            // Only sync if no pending operations at all
+            if (pendingOpsRef.current.size === 0 && lockedEntriesRef.current.size === 0) {
+                setEntries(data.entries);
+            } else {
+                console.log('[Pusher] Skipped full sync - operations in progress');
+            }
+        });
+
         // Cleanup on unmount
         return () => {
-            if (abortControllerRef.current) {
-                abortControllerRef.current.abort();
+            if (pusherRef.current) {
+                pusherRef.current.unsubscribe('queue-channel');
+                pusherRef.current.disconnect();
             }
-            if (typingTimeoutRef.current) {
-                clearTimeout(typingTimeoutRef.current);
-            }
+            // Clear all locks
+            pendingOpsRef.current.clear();
+            lockedEntriesRef.current.clear();
+            lockedSidesRef.current.clear();
         };
     }, []);
 
-    // Smart polling with abort controller
-    useEffect(() => {
-        if (!isPolling) return;
-
-        const interval = setInterval(() => {
-            // Cancel previous request if still pending
-            if (abortControllerRef.current) {
-                abortControllerRef.current.abort();
-            }
-
-            // Create new abort controller
-            abortControllerRef.current = new AbortController();
-
-            fetchEntries(abortControllerRef.current.signal);
-            if (showHistory) {
-                fetchHistory(abortControllerRef.current.signal);
-            }
-        }, 5000); // Poll every 5 seconds for smoother input experience
-
-        return () => {
-            clearInterval(interval);
-            if (abortControllerRef.current) {
-                abortControllerRef.current.abort();
-            }
-        };
-    }, [showHistory, isPolling]);
-
-    // Update entry
+    // Update entry with optimistic update for instant feedback
     const updateEntry = async (id: number, updates: Partial<QueueEntry>) => {
+        const lockTime = Date.now();
+
+        // Mark as pending and lock this entry
+        pendingOpsRef.current.add(id);
+        lockedEntriesRef.current.set(id, lockTime);
+
+        // Optimistic update - instant feedback for user
+        setEntries(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
+
         try {
             const response = await fetch(`/api/queue/${id}`, {
                 method: 'PATCH',
@@ -192,13 +268,25 @@ export default function QueueBoard() {
 
             if (response.status === 429) {
                 console.warn('Rate limited on update');
-                return;
+            } else if (!pusherRef.current) {
+                // If no Pusher, update from server response
+                const data = await response.json();
+                setEntries(prev => prev.map(e => e.id === id ? data : e));
             }
-
-            // Optimistic update only - let polling handle sync
-            setEntries(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
+            // Otherwise Pusher will broadcast the update to all clients
         } catch (error) {
             console.error('Error updating entry:', error);
+            // Keep optimistic update - don't fetch from server to avoid revert
+        } finally {
+            // Remove from pending
+            pendingOpsRef.current.delete(id);
+
+            // Keep locked for 2 more seconds after API completes
+            setTimeout(() => {
+                if (lockedEntriesRef.current.get(id) === lockTime) {
+                    lockedEntriesRef.current.delete(id);
+                }
+            }, 2000);
         }
     };
 
@@ -213,19 +301,10 @@ export default function QueueBoard() {
     // Handle text input with normalization and debouncing
     const handleTextInput = (id: number, rawText: string) => {
         const normalized = normalizeToEnglish(rawText);
+        const lockTime = Date.now();
 
-        // Mark as typing to prevent polling from overwriting
-        isTypingRef.current = true;
-
-        // Clear previous timeout
-        if (typingTimeoutRef.current) {
-            clearTimeout(typingTimeoutRef.current);
-        }
-
-        // Set timeout to mark typing as done after user stops
-        typingTimeoutRef.current = setTimeout(() => {
-            isTypingRef.current = false;
-        }, 1000);
+        // Lock this entry to prevent Pusher updates from overwriting
+        lockedEntriesRef.current.set(id, lockTime);
 
         // Update UI immediately for responsive feel
         setEntries(prev => prev.map(e => e.id === id ? { ...e, text: normalized } : e));
@@ -239,8 +318,10 @@ export default function QueueBoard() {
         console.log(`[DEBUG] handleCheckboxChange: rowIndex=${rowIndex}, side=${side}, checked=${checked}`);
         console.log(`[DEBUG] Current entries count: ${entries.length}`);
 
-        // Mark as interacting to prevent polling override
-        isInteractingRef.current = true;
+        const lockTime = Date.now();
+
+        // Lock this entire side to prevent Pusher override during checkbox operations
+        lockedSidesRef.current.set(side, lockTime);
 
         // Capture fresh state
         let currentEntries: QueueEntry[] = [];
@@ -279,6 +360,10 @@ export default function QueueBoard() {
 
             // Send API calls: check this row, uncheck all others in the cab
             const entriesInSide = uniqueEntries.filter(e => e.side === side);
+
+            // Mark all entries in this side as pending
+            entriesInSide.forEach(e => pendingOpsRef.current.add(e.id));
+
             console.log(`[DEBUG] Sending API calls for ${entriesInSide.length} entries in side ${side}`);
             const updatePromises = entriesInSide.map(entry => {
                 const shouldCheck = entry.rowIndex === rowIndex;
@@ -298,6 +383,9 @@ export default function QueueBoard() {
                 console.log(`[DEBUG] All API calls completed successfully`);
             } catch (error) {
                 console.error(`[DEBUG] Some API calls failed:`, error);
+            } finally {
+                // Remove all entries from pending
+                entriesInSide.forEach(e => pendingOpsRef.current.delete(e.id));
             }
         } else {
             // When unchecking: just uncheck this row
@@ -327,6 +415,10 @@ export default function QueueBoard() {
             console.log(`[DEBUG] Deduplicated: ${currentEntries.length} -> ${uniqueEntries.length} entries`);
 
             const entriesToUpdate = uniqueEntries.filter(e => e.side === side && e.rowIndex === rowIndex);
+
+            // Mark entries as pending
+            entriesToUpdate.forEach(e => pendingOpsRef.current.add(e.id));
+
             console.log(`[DEBUG] Sending API calls for ${entriesToUpdate.length} entries to uncheck`);
             const updatePromises = entriesToUpdate.map(entry => {
                 console.log(`[DEBUG] API call: entry ${entry.id} (row${entry.rowIndex}) -> checked: false`);
@@ -345,20 +437,28 @@ export default function QueueBoard() {
                 console.log(`[DEBUG] All API calls completed successfully`);
             } catch (error) {
                 console.error(`[DEBUG] Some API calls failed:`, error);
+            } finally {
+                // Remove entries from pending
+                entriesToUpdate.forEach(e => pendingOpsRef.current.delete(e.id));
             }
         }
 
-        // Reset interaction flag after delay (2s buffer for API completion)
+        // Keep side locked for 3 more seconds after operations complete
         setTimeout(() => {
-            isInteractingRef.current = false;
-            console.log(`[DEBUG] Interaction flag reset`);
-        }, 2000);
+            if (lockedSidesRef.current.get(side) === lockTime) {
+                lockedSidesRef.current.delete(side);
+                console.log(`[DEBUG] Side lock released: ${side}`);
+            }
+        }, 3000);
     };
 
     // Delete (clear) entry - only clear the text, keep the entry
     const clearEntry = async (id: number) => {
-        // Mark as interacting
-        isInteractingRef.current = true;
+        const lockTime = Date.now();
+
+        // Lock this entry
+        pendingOpsRef.current.add(id);
+        lockedEntriesRef.current.set(id, lockTime);
 
         try {
             // Optimistic update - clear text only, keep entry structure
@@ -372,30 +472,32 @@ export default function QueueBoard() {
 
             if (response.status === 429) {
                 console.warn('Rate limited on delete');
-                isInteractingRef.current = false;
                 return;
             }
 
-            // Wait a bit for database to process DELETE
-            await new Promise(resolve => setTimeout(resolve, 500));
-
-            // Force refresh to sync with database
-            console.log('[DEBUG] Force refresh after clearEntry');
-            await fetchEntries();
-
-            // NOW it's safe to allow polling again
-            console.log('[DEBUG] clearEntry complete, reset flag');
-            isInteractingRef.current = false;
+            // Optimistic update already applied - no need to fetch from server
+            console.log('[DEBUG] clearEntry complete');
         } catch (error) {
             console.error('Error clearing entry:', error);
-            isInteractingRef.current = false;
+        } finally {
+            // Remove from pending
+            pendingOpsRef.current.delete(id);
+
+            // Keep locked for 2 more seconds
+            setTimeout(() => {
+                if (lockedEntriesRef.current.get(id) === lockTime) {
+                    lockedEntriesRef.current.delete(id);
+                }
+            }, 2000);
         }
     };
 
     // Clear entire row (both P1 and P2) - parallel for speed
     const clearRow = async (rowIndex: number, side: string) => {
-        // Mark as interacting
-        isInteractingRef.current = true;
+        const lockTime = Date.now();
+
+        // Lock this side
+        lockedSidesRef.current.set(side, lockTime);
 
         // Capture fresh entries from state
         let currentEntries: QueueEntry[] = [];
@@ -417,6 +519,10 @@ export default function QueueBoard() {
             e => e.rowIndex === rowIndex && e.side === side && e.position === 'P2'
         );
 
+        // Mark entries as pending
+        if (p1Entry) pendingOpsRef.current.add(p1Entry.id);
+        if (p2Entry) pendingOpsRef.current.add(p2Entry.id);
+
         // Delete both in parallel (not sequential!)
         const deletePromises = [];
         if (p1Entry) {
@@ -430,18 +536,23 @@ export default function QueueBoard() {
             );
         }
 
-        await Promise.all(deletePromises);
+        try {
+            await Promise.all(deletePromises);
 
-        // Wait for database to process DELETEs
-        await new Promise(resolve => setTimeout(resolve, 500));
+            // Optimistic update already applied - no need to fetch from server
+            console.log('[DEBUG] clearRow complete');
+        } finally {
+            // Remove entries from pending
+            if (p1Entry) pendingOpsRef.current.delete(p1Entry.id);
+            if (p2Entry) pendingOpsRef.current.delete(p2Entry.id);
 
-        // Force refresh from database to sync state
-        console.log('[DEBUG] Force refresh after clearRow');
-        await fetchEntries();
-
-        // NOW it's safe to allow polling
-        console.log('[DEBUG] clearRow complete, reset flag');
-        isInteractingRef.current = false;
+            // Keep side locked for 3 more seconds
+            setTimeout(() => {
+                if (lockedSidesRef.current.get(side) === lockTime) {
+                    lockedSidesRef.current.delete(side);
+                }
+            }, 3000);
+        }
     };
 
     // Get entry by position
@@ -514,15 +625,18 @@ export default function QueueBoard() {
         <div className="container mx-auto p-4 max-w-7xl bg-white min-h-screen">
             <div className="flex justify-between items-center mb-6">
                 <h1 className="text-3xl font-bold text-gray-800">Bảng Hàng Đợi VHM</h1>
-                <button
-                    onClick={() => {
-                        setShowHistory(!showHistory);
-                        if (!showHistory) fetchHistory();
-                    }}
-                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
-                >
-                    {showHistory ? 'Ẩn lịch sử' : 'Xem lịch sử'}
-                </button>
+                <div className="flex items-center gap-4">
+
+                    <button
+                        onClick={() => {
+                            setShowHistory(!showHistory);
+                            if (!showHistory) fetchHistory();
+                        }}
+                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+                    >
+                        {showHistory ? 'Ẩn lịch sử' : 'Xem lịch sử'}
+                    </button>
+                </div>
             </div>
 
             <div className="grid grid-cols-2 gap-6 mb-8">

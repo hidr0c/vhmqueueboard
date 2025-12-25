@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { rateLimit, getClientIp } from "@/lib/rateLimit";
+import { triggerQueueUpdate, EVENTS } from "@/lib/pusher";
 
 export async function PATCH(
   request: Request,
@@ -83,6 +84,12 @@ export async function PATCH(
       });
     }
 
+    // Trigger Pusher event for real-time update
+    await triggerQueueUpdate(EVENTS.ENTRY_UPDATED, {
+      entry: updatedEntry,
+      changes: { text, checked },
+    });
+
     return NextResponse.json(updatedEntry);
   } catch (error) {
     console.error("Error updating entry:", error);
@@ -152,6 +159,12 @@ export async function DELETE(
         oldValue: entry.text,
         newValue: "",
       },
+    });
+
+    // Trigger Pusher event for real-time update
+    await triggerQueueUpdate(EVENTS.ENTRY_UPDATED, {
+      entry: updatedEntry,
+      changes: { text: "" },
     });
 
     return NextResponse.json(updatedEntry);

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { rateLimit, getClientIp } from "@/lib/rateLimit";
+import { triggerQueueUpdate, EVENTS } from "@/lib/pusher";
 
 // GET all queue entries
 export async function GET(request: Request) {
@@ -118,6 +119,9 @@ export async function POST(request: Request) {
       const allEntries = await prisma.queueEntry.findMany({
         orderBy: [{ rowIndex: "asc" }, { side: "asc" }, { position: "asc" }],
       });
+
+      // Trigger Pusher event for initialization
+      await triggerQueueUpdate(EVENTS.SYNC_ALL, { entries: allEntries });
 
       return NextResponse.json(allEntries);
     }
